@@ -1,0 +1,15 @@
+import {Router} from "express";
+import Project from "../models/Project.js";
+import User from "../models/User.js";
+import Task from "../models/Task.js";
+import Notification from "../models/Notification.js";
+import {io} from "../index.js";
+const router=Router();
+const access=async(id,uid)=>Project.findOne({_id:id,members:uid});
+router.get("/",async(req,res,next)=>{try{res.json(await Project.find({members:req.user.id}).populate("owner","name email").populate("members","name email").sort({updatedAt:-1}))}catch(e){next(e)}});
+router.post("/",async(req,res,next)=>{try{const p=await Project.create({name:req.body.name,description:req.body.description,owner:req.user.id,members:[req.user.id]});res.status(201).json(await p.populate("members","name email"))}catch(e){next(e)}});
+router.get("/:id",async(req,res,next)=>{try{const p=await access(req.params.id,req.user.id);if(!p)return res.status(404).json({message:"Project not found"});res.json(await p.populate("members","name email"))}catch(e){next(e)}});
+router.patch("/:id",async(req,res,next)=>{try{const p=await access(req.params.id,req.user.id);if(!p)return res.status(404).json({message:"Project not found"});if(req.body.name!==undefined)p.name=req.body.name;if(req.body.description!==undefined)p.description=req.body.description;await p.save();res.json(p)}catch(e){next(e)}});
+router.post("/:id/members",async(req,res,next)=>{try{const p=await access(req.params.id,req.user.id);if(!p)return res.status(404).json({message:"Project not found"});const user=await User.findOne({email:req.body.email?.toLowerCase()});if(!user)return res.status(404).json({message:"No account found for that email"});if(!p.members.some(m=>m.equals(user._id)))p.members.push(user._id);await p.save();await Notification.create({user:user._id,project:p._id,message:`You were added to project “${p.name}”`});io.to(`user:${user._id}`).emit("notification");res.json(await p.populate("members","name email"))}catch(e){next(e)}});
+router.delete("/:id",async(req,res,next)=>{try{const p=await Project.findOneAndDelete({_id:req.params.id,owner:req.user.id});if(!p)return res.status(404).json({message:"Project not found or only owner can delete"});await Task.deleteMany({project:p._id});res.json({message:"Project deleted"})}catch(e){next(e)}});
+export default router;
